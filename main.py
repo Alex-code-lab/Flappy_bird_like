@@ -11,6 +11,16 @@ from moviepy import VideoFileClip  # Importer moviepy pour lire la vidéo
 # Hardcoded metadata values
 app_name = "Joyeux Anniversaire!"
 
+def resource_path(relative_path):
+    """Obtenir le chemin absolu vers une ressource, fonctionne pour le développement et pour PyInstaller"""
+    try:
+        # PyInstaller crée un dossier temporaire et stocke le chemin dans _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 
 # Constantes
 WHITE = (255, 255, 255)
@@ -26,7 +36,8 @@ PIPE_GAP_MAX = 200  # Valeur maximale de l'écart
 SPEED_INCREASE_INTERVAL = 3000
 SCORE_INTERVAL_FOR_SPEED_INCREASE = 3
 
-FONT_NAME = '/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/SuperMario256.ttf' #pygame.font.match_font('avenir')
+# FONT_NAME = '/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/SuperMario256.ttf' #pygame.font.match_font('avenir')
+FONT_NAME = resource_path('resources/SuperMario256.ttf')
 
 def draw_text(surf, text, size, x, y, color=(255, 255, 255), font_name=FONT_NAME):
     font = pygame.font.Font(font_name, size)
@@ -66,7 +77,8 @@ def draw_button(surf, text, x, y, width, height, color =  (126, 223, 71)):
 
 def start_screen(screen):
     # Charger l'image de titre
-    image_path = "/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/mission_joyeux_anniversaire.png"
+    # image_path = "/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/mission_joyeux_anniversaire.png"
+    image_path = resource_path('resources/mission_joyeux_anniversaire.png')
     try:
         title_image = pygame.image.load(image_path).convert_alpha()
     except FileNotFoundError:
@@ -128,7 +140,8 @@ def start_screen(screen):
 def game_over_screen(screen, final_score):
 
     # Charger l'image de titre
-    image_path = "/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/Game_over.png"
+    # image_path = "/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/Game_over.png"
+    image_path = resource_path('resources/Game_over.png')    
     try:
         title_image = pygame.image.load(image_path).convert_alpha()
     except FileNotFoundError:
@@ -272,11 +285,17 @@ def main():
     start_screen(screen)
 
     # Initialisation des images
-    bird_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/mario_volant.png').convert_alpha()
+    # bird_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/mario_volant.png').convert_alpha()
+    # bird_img = pygame.transform.scale(bird_img, (50, 50))
+    # brique_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/brique.png').convert_alpha()
+    # brique_img = pygame.transform.scale(brique_img, (50, 50))
+    # plante_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/plante.png').convert_alpha()
+    # plante_img = pygame.transform.scale(plante_img, (50, 75))
+    bird_img = pygame.image.load(resource_path('resources/mario_volant.png')).convert_alpha()
     bird_img = pygame.transform.scale(bird_img, (50, 50))
-    brique_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/brique.png').convert_alpha()
+    brique_img = pygame.image.load(resource_path('resources/brique.png')).convert_alpha()
     brique_img = pygame.transform.scale(brique_img, (50, 50))
-    plante_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/plante.png').convert_alpha()
+    plante_img = pygame.image.load(resource_path('resources/plante.png')).convert_alpha()
     plante_img = pygame.transform.scale(plante_img, (50, 75))
 
     stars = create_stars(10)
@@ -388,10 +407,13 @@ def main():
                 last_speed_increase_score = score // SCORE_INTERVAL_FOR_SPEED_INCREASE
 
             # Jouer la vidéo lorsque le score atteint 10
+            # if score >= 1 and not video_played:
+            #     play_video(screen, '/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/test_video.avi')
+            #     video_played = True
             if score >= 1 and not video_played:
-                play_video(screen, '/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/test_video.avi')
+                play_video(screen, resource_path('resources/test_video.avi'))
                 video_played = True
-
+                
             # Vérifier si l'oiseau est sorti de l'écran
             if bird_y >= SCREEN_HEIGHT - bird_img.get_height() or bird_y <= 0:
                 running = False

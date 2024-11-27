@@ -1,13 +1,16 @@
 import pygame
 import sys
 import os
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/bin/ffmpeg"
 import random
 import datetime
 import moviepy
 from moviepy import VideoFileClip  # Importer moviepy pour lire la vidéo
 
+
 # Hardcoded metadata values
 app_name = "Joyeux Anniversaire!"
+
 
 # Constantes
 WHITE = (255, 255, 255)

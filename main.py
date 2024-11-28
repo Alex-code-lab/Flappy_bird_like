@@ -1,433 +1,814 @@
 import pygame
 import sys
 import os
-os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/bin/ffmpeg"
 import random
-import datetime
-import moviepy
-from moviepy import VideoFileClip  # Importer moviepy pour lire la vidéo
+from moviepy import VideoFileClip  # Importer VideoFileClip depuis moviepy
+import time  # Importer time pour gérer le cooldown
+import logging
 
+# Configuration des logs
+logging.basicConfig(level=logging.DEBUG, filename='game.log', filemode='w',
+                    format='%(name)s - %(levelname)s - %(message)s')
 
-# Hardcoded metadata values
-app_name = "Joyeux Anniversaire!"
+# Configuration de l'environnement pour MoviePy (si nécessaire)
+# os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/bin/ffmpeg" # Ajustez le chemin si nécessaire
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/ffmpeg" # Ajustez le chemin si nécessaire
+
+# Constantes globales du jeu
+WHITE = (255, 255, 255)  # Couleur blanche en RGB
+SCREEN_WIDTH, SCREEN_HEIGHT = 400, 600  # Dimensions de la fenêtre du jeu
+FPS = 30  # Images par seconde
+GRAVITY = 0.25  # Gravité appliquée au joueur
+FLAP_STRENGTH = -5  # Force du saut du joueur
+PIPE_SPEED_INIT = -4  # Vitesse initiale des tuyaux
+PIPE_GAP_MIN = 150  # Écart minimal entre les tuyaux (augmenté pour faciliter le jeu)
+PIPE_GAP_MAX = 250  # Écart maximal entre les tuyaux (augmenté pour faciliter le jeu)
+SCORE_INTERVAL_FOR_SPEED_INCREASE = 3  # Score nécessaire pour augmenter la vitesse
+DAY_NIGHT_CYCLE = 5  # Intervalle de score pour changer le cycle jour/nuit
+TRANSITION_DURATION = FPS * 2  # Durée de la transition jour/nuit en frames
+PAUSE_COOLDOWN = 2  # Délai en secondes pour le cooldown de la pause
 
 def resource_path(relative_path):
-    """Obtenir le chemin absolu vers une ressource, fonctionne pour le développement et pour PyInstaller"""
+    """Obtenir le chemin absolu vers une ressource, fonctionne pour le développement et pour PyInstaller."""
     try:
-        # PyInstaller crée un dossier temporaire et stocke le chemin dans _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-
     return os.path.join(base_path, relative_path)
 
+class Game:
+    """
+    Classe principale du jeu qui gère la boucle du jeu, les événements, les mises à jour et les rendus.
+    """
 
-# Constantes
-WHITE = (255, 255, 255)
-SCREEN_WIDTH, SCREEN_HEIGHT = 400, 600
-BIRD_X = 50
-BIRD_Y = 300
-GRAVITY = 0.25
-FLAP_STRENGTH = -5
-PIPE_SPEED_INIT = -4
-PIPE_GAP = 150
-PIPE_GAP_MIN = 180  # Valeur minimale de l'écart
-PIPE_GAP_MAX = 200  # Valeur maximale de l'écart
-SPEED_INCREASE_INTERVAL = 3000
-SCORE_INTERVAL_FOR_SPEED_INCREASE = 3
+    def __init__(self):
+        pygame.init()
+        pygame.display.set_caption("Joyeux Anniversaire!")
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        self.clock = pygame.time.Clock()
+        self.load_resources()
+        self.running = True
+        self.video_played = False
+        self.score = 0
+        self.last_speed_increase_score = 0
+        self.font_name = self.font_path
+        self.is_night = False  # Indicateur du cycle jour/nuit
+        self.game_paused = False  # Indicateur si le jeu est en pause
 
-# FONT_NAME = '/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/SuperMario256.ttf' #pygame.font.match_font('avenir')
-FONT_NAME = resource_path('resources/SuperMario256.ttf')
+        # Variables pour la transition jour/nuit
+        self.transitioning = False
+        self.transition_progress = 0
+        self.transition_direction = 1  # 1 pour jour vers nuit, -1 pour nuit vers jour
+        self.day_color = pygame.Color(102, 190, 209)
+        self.night_color = pygame.Color(25, 25, 112)
+        self.background_color = self.day_color
 
-def draw_text(surf, text, size, x, y, color=(255, 255, 255), font_name=FONT_NAME):
-    font = pygame.font.Font(font_name, size)
-    text_surface = font.render(text, True, color)
-    text_rect = text_surface.get_rect()
-    text_rect.midtop = (x, y)
-    surf.blit(text_surface, text_rect)
+        # Créer les objets du jeu
+        self.player = Player(self)
+        self.pipes = []
+        self.clouds = [Cloud(self) for _ in range(5)]
+        self.stars = [Star() for _ in range(25)]
+        self.shells = [Shell(self) for _ in range(3)]
 
-def create_snowflakes(num_flakes):
-    return [[random.randint(0, SCREEN_WIDTH),
-             random.randint(0, SCREEN_HEIGHT),
-             random.randint(2, 5)] for _ in range(num_flakes)]
+        # Attribut pour gérer les transitions multiples
+        self.cycle_changed = False
 
-def update_and_draw_snowflakes(screen, snowflakes):
-    for flake in snowflakes:
-        flake[1] += flake[2]
-        pygame.draw.circle(screen, WHITE, (flake[0], flake[1]), flake[2])
-        if flake[1] > SCREEN_HEIGHT:
-            flake[0] = random.randint(0, SCREEN_WIDTH)
-            flake[1] = -5
-            flake[2] = random.randint(2, 5)
+        # Initialiser les boutons de pause (vide au début)
+        self.pause_buttons = []
 
-def draw_button(surf, text, x, y, width, height, color =  (126, 223, 71)):
-    mouse = pygame.mouse.get_pos()
-    click = pygame.mouse.get_pressed()
-    button_clicked = False
+        # Initialiser le timer pour le cooldown de la pause
+        self.last_pause_toggle_time = 0
 
-    if x + width > mouse[0] > x and y + height > mouse[1] > y:
-        pygame.draw.rect(surf, color, (x, y, width, height))
-        if click[0] == 1:
-            button_clicked = True
-    else:
-        pygame.draw.rect(surf, (170, 170, 170), (x, y, width, height))
+    # def load_resources(self):
+    #     """
+    #     Charger toutes les ressources nécessaires (images, polices, musique).
+    #     """
+    #     # Chemin vers la police utilisée
+    #     self.font_path = resource_path('resources/SuperMario256.ttf')
 
-    draw_text(surf, text, 20, x + width / 2, y + 10)
-    return button_clicked
+    #     # Charger et redimensionner les images nécessaires
+    #     self.bird_img = pygame.image.load(resource_path('resources/mario_volant.png')).convert_alpha()
+    #     self.bird_img = pygame.transform.scale(self.bird_img, (50, 50))
 
-def start_screen(screen):
-    # Charger l'image de titre
-    # image_path = "/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/mission_joyeux_anniversaire.png"
-    image_path = resource_path('resources/mission_joyeux_anniversaire.png')
-    try:
-        title_image = pygame.image.load(image_path).convert_alpha()
-    except FileNotFoundError:
-        print(f"Erreur: Le fichier image '{image_path}' est introuvable.")
+    #     self.brique_img = pygame.image.load(resource_path('resources/brique.png')).convert_alpha()
+    #     self.brique_img = pygame.transform.scale(self.brique_img, (50, 50))
+
+    #     self.plante_img = pygame.image.load(resource_path('resources/plante.png')).convert_alpha()
+    #     self.plante_img = pygame.transform.scale(self.plante_img, (50, 75))
+
+    #     self.nuage_img = pygame.image.load(resource_path('resources/nuage.png')).convert_alpha()
+    #     self.nuage_img = pygame.transform.scale(self.nuage_img, (100, 60))
+
+    #     self.shell_red_img_original = pygame.image.load(resource_path('resources/carapace_rouge.png')).convert_alpha()
+    #     self.shell_green_img_original = pygame.image.load(resource_path('resources/carapace_verte.png')).convert_alpha()
+
+    #     self.title_image = pygame.image.load(resource_path('resources/mission_joyeux_anniversaire.png')).convert_alpha()
+    #     self.game_over_image = pygame.image.load(resource_path('resources/Game_over.png')).convert_alpha()
+
+    #     # Redimensionner les images de titre et de fin
+    #     image_width = 300
+    #     title_image_height = int(self.title_image.get_height() * (image_width / self.title_image.get_width()))
+    #     self.title_image = pygame.transform.scale(self.title_image, (image_width, title_image_height))
+    #     game_over_image_height = int(self.game_over_image.get_height() * (image_width / self.game_over_image.get_width()))
+    #     self.game_over_image = pygame.transform.scale(self.game_over_image, (image_width, game_over_image_height))
+
+    #     # Charger et jouer la musique de fond
+    #     pygame.mixer.music.load(resource_path('resources/mario_theme_song.mp3'))  # Remplacez par le nom de votre fichier musical
+    #     pygame.mixer.music.set_volume(0.5)  # Optionnel : régler le volume (0.0 à 1.0)
+    #     pygame.mixer.music.play(-1)  # -1 pour une boucle infinie
+
+    def load_resources(self):
+        """Charger toutes les ressources nécessaires (images, polices, musique)."""
+        try:
+            logging.debug("Loading resources")
+            # Chemin vers la police utilisée
+            self.font_path = resource_path('resources/SuperMario256.ttf')
+
+            # Charger et redimensionner les images nécessaires
+            self.bird_img = pygame.image.load(resource_path('resources/mario_volant.png')).convert_alpha()
+            self.bird_img = pygame.transform.scale(self.bird_img, (50, 50))
+
+            self.brique_img = pygame.image.load(resource_path('resources/brique.png')).convert_alpha()
+            self.brique_img = pygame.transform.scale(self.brique_img, (50, 50))
+
+            self.plante_img = pygame.image.load(resource_path('resources/plante.png')).convert_alpha()
+            self.plante_img = pygame.transform.scale(self.plante_img, (50, 75))
+
+            self.nuage_img = pygame.image.load(resource_path('resources/nuage.png')).convert_alpha()
+            self.nuage_img = pygame.transform.scale(self.nuage_img, (100, 60))
+
+            self.shell_red_img_original = pygame.image.load(resource_path('resources/carapace_rouge.png')).convert_alpha()
+            self.shell_green_img_original = pygame.image.load(resource_path('resources/carapace_verte.png')).convert_alpha()
+
+            self.title_image = pygame.image.load(resource_path('resources/mission_joyeux_anniversaire.png')).convert_alpha()
+            self.game_over_image = pygame.image.load(resource_path('resources/Game_over.png')).convert_alpha()
+
+            # Redimensionner les images de titre et de fin
+            image_width = 300
+            title_image_height = int(self.title_image.get_height() * (image_width / self.title_image.get_width()))
+            self.title_image = pygame.transform.scale(self.title_image, (image_width, title_image_height))
+            game_over_image_height = int(self.game_over_image.get_height() * (image_width / self.game_over_image.get_width()))
+            self.game_over_image = pygame.transform.scale(self.game_over_image, (image_width, game_over_image_height))
+
+            # Charger FFMPEG pour MoviePy
+            ffmpeg_path = resource_path('resources/ffmpeg')  # Assurez-vous que le binaire FFMPEG est présent
+            os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_path
+            logging.debug(f"FFMPEG path set to: {ffmpeg_path}")
+
+            # Charger et jouer la musique de fond
+            pygame.mixer.music.load(resource_path('resources/mario_theme_song.mp3'))
+            pygame.mixer.music.set_volume(0.5)
+            pygame.mixer.music.play(-1)
+            logging.debug("Background music started")
+        except Exception as e:
+            logging.error(f"Error loading resources: {e}")
+            raise
+
+    def draw_text(self, surf, text, size, x, y, color=(255, 255, 255)):
+        """
+        Dessiner du texte sur une surface donnée.
+        """
+        font = pygame.font.Font(self.font_name, size)
+        text_surface = font.render(text, True, color)
+        text_rect = text_surface.get_rect()
+        text_rect.midtop = (x, y)
+        surf.blit(text_surface, text_rect)
+
+    def run(self):
+        """
+        Lancer le jeu, gérer la boucle principale et les écrans de démarrage et de fin.
+        """
+        self.start_screen()
+        while self.running:
+            self.new_game()
+            self.game_loop()
+            if not self.game_over_screen():
+                self.running = False
         pygame.quit()
         sys.exit()
 
-    # Redimensionner l'image si nécessaire (par exemple pour une largeur de 300 pixels)
-    image_width = 300
-    image_height = int(title_image.get_height() * (image_width / title_image.get_width()))
-    title_image = pygame.transform.scale(title_image, (image_width, image_height))
+    def new_game(self):
+        """
+        Initialiser une nouvelle partie en réinitialisant les variables et en créant les objets du jeu.
+        """
+        self.player.reset()
+        self.score = 0
+        self.video_played = False
+        self.pipes = []
+        self.clouds = [Cloud(self) for _ in range(5)]
+        self.stars = [Star() for _ in range(25)]
+        self.shells = [Shell(self) for _ in range(3)]
+        self.is_night = False  # Commencer le jeu en mode jour
+        self.background_color = self.day_color
+        self.transitioning = False
+        self.game_paused = False
+        self.cycle_changed = False
+        self.pause_buttons = []  # Réinitialiser les boutons de pause
+        self.last_pause_toggle_time = 0  # Réinitialiser le timer de cooldown
+        self.create_initial_pipes()
 
-    # Créer les étoiles et flocons de neige
-    stars = create_stars(25)  # Étoiles
-    snowflakes = create_snowflakes(100)  # Flocons de neige
-
-    # Texte d'introduction
-    intro_text = [
-        "Bienvenue au jeu d'anniversaire!",
-        "Aidez Mario a atteindre",
-        "le score de 10 pour une surprise speciale!",
-        "",
-        "Utilisez la fleche du haut pour monter,",
-        "et celle du bas pour descendre.",
-        "Bonne chance!"
-    ]
-
-    while True:
-        # Gestion des événements
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-
-        # Fond bleu clair
-        screen.fill((102, 190, 209))
-
-        # Dessiner les étoiles et les flocons de neige
-        draw_stars(screen, stars)
-        update_and_draw_snowflakes(screen, snowflakes)
-
-        # Afficher l'image de titre
-        screen.blit(title_image, (SCREEN_WIDTH / 2 - title_image.get_width() / 2, SCREEN_HEIGHT / 10))
-
-        # Afficher le texte explicatif sous l'image
-        y_offset = SCREEN_HEIGHT / 3
-        for line in intro_text:
-            draw_text(screen, line, 15, SCREEN_WIDTH / 2, y_offset)
-            y_offset += 30
-
-        # Afficher le bouton "Commencer"
-        if draw_button(screen, "Commencer", 125, 450, 150, 50):
-            break
-
-        # Rafraîchir l'écran
-        pygame.display.flip()
-        pygame.time.Clock().tick(15)
-
-def game_over_screen(screen, final_score):
-
-    # Charger l'image de titre
-    # image_path = "/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/Game_over.png"
-    image_path = resource_path('resources/Game_over.png')    
-    try:
-        title_image = pygame.image.load(image_path).convert_alpha()
-    except FileNotFoundError:
-        print(f"Erreur: Le fichier image '{image_path}' est introuvable.")
-        pygame.quit()
-        sys.exit()
-
-    # Redimensionner l'image si nécessaire (par exemple pour une largeur de 300 pixels)
-    image_width = 300
-    image_height = int(title_image.get_height() * (image_width / title_image.get_width()))
-    title_image = pygame.transform.scale(title_image, (image_width, image_height))
-
-    stars = create_stars(25)  # Création des étoiles
-    snowflakes = create_snowflakes(100)
-
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-
-        # Dessiner le fond
-        screen.fill((102, 190, 209))
-
-        # Dessiner les étoiles et les flocons
-        draw_stars(screen, stars)
-        update_and_draw_snowflakes(screen, snowflakes)
-
-        # Dessiner l'image de Game Over
-        screen.blit(title_image, (SCREEN_WIDTH / 2 - title_image.get_width() / 2, SCREEN_HEIGHT / 4))
-
-        # Afficher le score final
-        score_text = f"Score Final: {final_score}"
-        draw_text(screen, score_text, 36, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
-
-        # Dessiner les boutons
-        if draw_button(screen, "Rejouer", 100, 450, 100, 50):
-            return True  # Indique de recommencer le jeu
-        if draw_button(screen, "Quitter", 200, 450, 100, 50, color=(249, 24, 39)):
-            return False  # Indique de quitter le jeu
-
-        # Rafraîchir l'écran
-        pygame.display.flip()
-        pygame.time.Clock().tick(15)
-
-def create_stars(num_stars):
-    return [[random.randint(0, SCREEN_WIDTH),
-             random.randint(0, SCREEN_HEIGHT)] for _ in range(num_stars)]
-
-def draw_stars(screen, stars):
-    for star in stars:
-        pygame.draw.circle(screen, (255, 255, 0), star, random.randint(1, 3))
-
-def wait_for_key():
-    waiting = True
-    while waiting:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            if event.type == pygame.KEYDOWN:
-                waiting = False
-
-def play_video(screen, video_path):
-    clip = VideoFileClip(video_path)
-    clip = clip.resized(height=SCREEN_HEIGHT, width=SCREEN_WIDTH)
-    clock = pygame.time.Clock()
-
-    for frame in clip.iter_frames(fps=30, dtype="uint8"):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-        frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
-        screen.blit(frame_surface, (0, 0))
-        pygame.display.update()
-        clock.tick(30)
-    clip.close()
-
-def draw_pipe(screen, pipe_x, pipe_y, pipe_gap, brique_img, plante_img, has_plant):
-    """
-    Dessine un tuyau (pipe) constitué de briques et, éventuellement, d'une plante.
-
-    Paramètres:
-        - screen: Surface Pygame sur laquelle dessiner les tuyaux.
-        - pipe_x: Position x du tuyau (en pixels).
-        - pipe_y: Position y du bord supérieur du tuyau inférieur (en pixels).
-        - pipe_gap: Espace vertical entre les deux tuyaux (en pixels).
-        - brique_img: Image de la brique utilisée pour construire les tuyaux.
-        - plante_img: Image de la plante (optionnelle) placée dans le tuyau supérieur.
-        - has_plant: Booléen indiquant si une plante est présente dans le tuyau supérieur.
-
-    Retourne:
-        Aucun. La fonction dessine directement sur l'écran.
-    """
-
-    # Obtenir les dimensions des images (briques et plante)
-    brique_height = brique_img.get_height()  # Hauteur d'une brique
-    brique_width = brique_img.get_width()    # Largeur d'une brique
-    plante_height = plante_img.get_height()  # Hauteur de la plante
-    plante_width = plante_img.get_width()    # Largeur de la plante
-
-    # Dessiner le tuyau supérieur (les briques à l'envers)
-    # Initialiser la position verticale pour les briques du tuyau supérieur
-    y_top = pipe_y - pipe_gap - brique_height  # Position initiale juste au-dessus de l'écart
-    min_y_top = -brique_height                # Limite supérieure (hors écran)
-
-    # Si une plante est présente, réduire le nombre de briques dans le tuyau supérieur
-    if has_plant:
-        min_y_top += 2 * brique_height  # Réduire de deux briques pour faire de la place à la plante
-
-    # Boucle pour dessiner les briques du tuyau supérieur
-    while y_top > min_y_top:  # Tant que la position est au-dessus de la limite
-        # Dessiner une brique retournée (tuyau supérieur est inversé)
-        screen.blit(pygame.transform.flip(brique_img, False, True), (pipe_x, y_top))
-        y_top -= brique_height  # Remonter pour la prochaine brique
-
-    # Dessiner le tuyau inférieur (les briques normales)
-    # Initialiser la position verticale pour les briques du tuyau inférieur
-    y_bottom = pipe_y
-
-    # Boucle pour dessiner les briques du tuyau inférieur
-    while y_bottom < SCREEN_HEIGHT:  # Tant que la position est en dessous de l'écran
-        # Dessiner une brique normalement orientée
-        screen.blit(brique_img, (pipe_x, y_bottom))
-        y_bottom += brique_height  # Descendre pour la prochaine brique
-
-    # Dessiner la plante si le tuyau supérieur contient une plante
-    if has_plant:
-        # Calculer la position de la plante dans le tuyau supérieur
-        plant_x = pipe_x + (brique_width - plante_width) // 2  # Centrer horizontalement
-        plant_y = pipe_y - plante_height                      # Juste au-dessus du bord supérieur
-        # Dessiner la plante
-        screen.blit(plante_img, (plant_x, plant_y))
-
-def main():
-    pygame.init()
-    pygame.display.set_caption(app_name)
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-
-    start_screen(screen)
-
-    # Initialisation des images
-    # bird_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/mario_volant.png').convert_alpha()
-    # bird_img = pygame.transform.scale(bird_img, (50, 50))
-    # brique_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/brique.png').convert_alpha()
-    # brique_img = pygame.transform.scale(brique_img, (50, 50))
-    # plante_img = pygame.image.load('/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/plante.png').convert_alpha()
-    # plante_img = pygame.transform.scale(plante_img, (50, 75))
-    bird_img = pygame.image.load(resource_path('resources/mario_volant.png')).convert_alpha()
-    bird_img = pygame.transform.scale(bird_img, (50, 50))
-    brique_img = pygame.image.load(resource_path('resources/brique.png')).convert_alpha()
-    brique_img = pygame.transform.scale(brique_img, (50, 50))
-    plante_img = pygame.image.load(resource_path('resources/plante.png')).convert_alpha()
-    plante_img = pygame.transform.scale(plante_img, (50, 75))
-
-    stars = create_stars(10)
-
-    video_played = False
-    last_speed_increase_score = 0
-
-    running = True
-    while running:
-        bird_y = BIRD_Y
-        bird_velocity = 0
-        pipe_speed = PIPE_SPEED_INIT  # Assurez-vous que pipe_speed est défini ici
-
-        # Calculer la position initiale du premier tuyau pour un délai de 3 secondes
+    def create_initial_pipes(self):
+        """
+        Créer le premier tuyau avec un délai pour que le joueur ait le temps de se préparer.
+        """
         delay_seconds = 3
-        frames_per_second = 30
-        pipe_speed_per_second = -pipe_speed * frames_per_second  # pipe_speed est négatif
+        pipe_speed_per_second = -PIPE_SPEED_INIT * FPS
         distance = pipe_speed_per_second * delay_seconds
         initial_pipe_x = SCREEN_WIDTH + distance
+        self.pipes.append(Pipe(self, initial_pipe_x))
 
-        # Initialiser les tuyaux avec la nouvelle position
-        pipes = [[initial_pipe_x, random.randint(100, 400), False,
-                  random.randint(PIPE_GAP_MIN, PIPE_GAP_MAX), random.choice([True, False])]]
-
-        score = 0
-        snowflakes = create_snowflakes(25)
-
-        GAP_MARGIN = 50  # Marge minimale pour le gap (en pixels)
-
+    def game_loop(self):
+        """
+        Boucle principale du jeu où les événements, les mises à jour et les rendus sont gérés.
+        """
+        self.last_speed_increase_score = 0
+        running = True
         while running:
-            # Gestion des événements
+            self.clock.tick(FPS)
+            self.handle_events()
+            if not self.game_paused:
+                self.update()
+            self.draw()
+            if self.player.dead:
+                running = False
+
+    def handle_events(self):
+        """
+        Gérer les événements tels que les entrées du clavier ou la fermeture de la fenêtre.
+        """
+        current_time = time.time()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.KEYDOWN:
+                # Vérifier si le cooldown est passé
+                if event.key == pygame.K_RETURN and (current_time - self.last_pause_toggle_time) > PAUSE_COOLDOWN:
+                    # Bascule l'état de pause lorsqu'on appuie sur Entrée
+                    self.game_paused = not self.game_paused
+                    self.last_pause_toggle_time = current_time  # Réinitialiser le timer de cooldown
+                # Gérer les actions du joueur uniquement si le jeu n'est pas en pause
+                if not self.game_paused:
+                    if event.key == pygame.K_UP:
+                        self.player.flap()
+                    elif event.key == pygame.K_DOWN:
+                        self.player.dive()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if self.game_paused and self.pause_buttons:
+                    for button in self.pause_buttons:
+                        if button.is_clicked():
+                            if button.text == "Reprendre la partie":
+                                self.game_paused = False
+
+    def update(self):
+        """
+        Mettre à jour l'état du jeu, y compris le joueur, les tuyaux, les nuages et la détection des collisions.
+        """
+        self.player.update()
+        for cloud in self.clouds:
+            cloud.update()
+        for shell in self.shells:
+            shell.update()
+        for pipe in self.pipes:
+            pipe.update()
+            if pipe.off_screen():
+                self.pipes.remove(pipe)
+                self.pipes.append(Pipe(self))
+            if not pipe.passed and pipe.x + pipe.width < self.player.x:
+                self.score += 1
+                pipe.passed = True
+
+        # Gérer la transition jour/nuit
+        if self.transitioning:
+            self.transition_progress += 1
+            progress_ratio = self.transition_progress / TRANSITION_DURATION
+            if self.transition_direction == 1:
+                # Jour vers nuit
+                self.background_color = self.day_color.lerp(self.night_color, progress_ratio)
+            else:
+                # Nuit vers jour
+                self.background_color = self.night_color.lerp(self.day_color, progress_ratio)
+            if self.transition_progress >= TRANSITION_DURATION:
+                self.transitioning = False
+                self.is_night = not self.is_night
+                self.transition_progress = 0
+        else:
+            # Commencer la transition si le score atteint le multiple
+            if (self.score % DAY_NIGHT_CYCLE == 0 and self.score != 0 and 
+                not self.transitioning and not self.cycle_changed):
+                self.transitioning = True
+                self.transition_direction = 1 if not self.is_night else -1
+                self.transition_progress = 0
+                self.cycle_changed = True  # Empêcher de déclencher plusieurs fois
+            elif self.score % DAY_NIGHT_CYCLE != 0:
+                self.cycle_changed = False  # Réinitialiser pour permettre le prochain changement
+
+        # Augmenter la vitesse des tuyaux en fonction du score
+        if self.score // SCORE_INTERVAL_FOR_SPEED_INCREASE > self.last_speed_increase_score:
+            for pipe in self.pipes:
+                pipe.speed -= 1
+                global PIPE_SPEED_INIT
+                PIPE_SPEED_INIT -= 1
+            self.last_speed_increase_score = self.score // SCORE_INTERVAL_FOR_SPEED_INCREASE
+
+        # Vérifier les collisions entre le joueur et les tuyaux
+        for pipe in self.pipes:
+            if self.player.collide_with(pipe):
+                self.player.dead = True
+
+        # Vérifier si le joueur est sorti de l'écran
+        if self.player.y >= SCREEN_HEIGHT - self.player.height or self.player.y <= 0:
+            self.player.dead = True
+
+        # Jouer la vidéo si le score atteint 10 et que la vidéo n'a pas encore été jouée
+        if self.score >= 10 and not self.video_played:
+            self.play_video(resource_path('resources/test_video.avi'))
+            self.video_played = True
+            self.game_paused = True
+            self.pause_buttons = [
+                Button("Reprendre la partie", 100, 450, 200, 50, (81, 219, 63))
+            ]
+
+    def draw(self):
+        """
+        Dessiner tous les éléments du jeu à l'écran.
+        """
+        # Remplir l'écran avec la couleur de fond actuelle
+        self.screen.fill(self.background_color)
+
+        # Dessiner les étoiles uniquement pendant la nuit ou la transition vers la nuit
+        if self.is_night or (self.transitioning and self.transition_direction == 1):
+            for star in self.stars:
+                star.update()
+                star.draw(self.screen)
+
+        for cloud in self.clouds:
+            cloud.draw(self.screen)
+        for shell in self.shells:
+            shell.draw(self.screen)
+        self.player.draw(self.screen)
+        for pipe in self.pipes:
+            pipe.draw(self.screen)
+        self.draw_text(self.screen, f"Score: {self.score}", 24, SCREEN_WIDTH - 100, 50)
+
+        if self.game_paused and self.video_played:
+            # Afficher l'écran de pause spécifique après la vidéo
+            self.draw_text(self.screen, "Jeu en Pause", 36, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 50)
+            for button in self.pause_buttons:
+                button.draw(self.screen, font_name=self.font_name)
+        
+        if self.game_paused and not self.video_played:
+            # Afficher l'écran de pause standard
+            self.draw_pause_screen()
+
+        pygame.display.update()
+
+    def draw_pause_screen(self):
+        """
+        Dessiner l'écran de pause.
+        """
+        # Créer un rectangle semi-transparent pour l'arrière-plan de la pause
+        pause_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        pause_overlay.fill((0, 0, 0, 180))  # Noir avec alpha pour transparence
+        self.screen.blit(pause_overlay, (0, 0))
+
+        # Afficher le texte de pause
+        pause_text = "PAUSE, appuyez sur ENTRE pour reprendre"
+        self.draw_text(self.screen, pause_text, 15, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 15, color=(255, 255, 255))
+
+    def start_screen(self):
+        """
+        Afficher l'écran de démarrage du jeu avec les instructions et un bouton pour commencer.
+        """
+        intro_text = [
+            ("Bienvenue au jeu d'anniversaire!", 20, (255, 255, 255)),
+            ("Aide Mario a atteindre", 15, (255, 255, 255)),
+            ("le score egal à ton age pour ", 15, (255, 255, 255)),
+            ("une surprise speciale!", 15, (255, 255, 255)),
+            ("", 20),
+            ("Utilise :", 15, (255, 255, 255)),
+            ("- la fleche du haut pour monter,", 15, (255, 255, 255)),
+            ("- celle du bas pour descendre.", 15, (255, 255, 255)),
+            ("", 20),
+            ("Bonne chance!", 20, (255, 255, 255))
+        ]
+        buttons = [
+            Button("Commencer", 125, 450, 150, 50, (126, 223, 71))
+        ]
+        self.show_screen(self.title_image, intro_text, buttons)
+
+    def game_over_screen(self):
+        """
+        Afficher l'écran de fin de jeu avec le score final et des options pour rejouer ou quitter.
+        """
+        score_text = f"Score Final: {self.score}"
+        text_lines_with_styles = [
+            (score_text, 36, (255, 255, 255)),
+        ]
+        buttons = [
+            Button("Rejouer", 100, 450, 100, 50, (81, 219, 63)),
+            Button("Quitter", 200, 450, 100, 50, (247, 46, 46))
+        ]
+        result = self.show_screen(self.game_over_image, text_lines_with_styles, buttons)
+        return result == "Rejouer"
+
+    def show_screen(self, image, text_lines_with_styles, buttons, default_size=15, default_color=(255, 255, 255)):
+        """
+        Afficher un écran générique avec une image, du texte (avec tailles et couleurs) et des boutons.
+        """
+        waiting = True
+        while waiting:
+            self.clock.tick(15)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_UP:
-                        bird_velocity = FLAP_STRENGTH
-                    elif event.key == pygame.K_DOWN:
-                        bird_velocity = -FLAP_STRENGTH
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    for button in buttons:
+                        if button.is_clicked():
+                            if button.text == "Commencer":
+                                return
+                            elif button.text == "Rejouer":
+                                return "Rejouer"
+                            elif button.text == "Quitter":
+                                pygame.quit()
+                                sys.exit()
+            # Remplir l'écran avec la couleur de fond actuelle
+            self.screen.fill(self.background_color)
 
-            bird_velocity += GRAVITY
-            bird_y += bird_velocity
+            # Dessiner les étoiles si c'est la nuit
+            if self.is_night:
+                for star in self.stars:
+                    star.update()
+                    star.draw(self.screen)
 
-            screen.fill((102, 190, 209))
-            draw_stars(screen, stars)
-            update_and_draw_snowflakes(screen, snowflakes)
-            screen.blit(bird_img, (BIRD_X, bird_y))
-            bird_rect = bird_img.get_rect(topleft=(BIRD_X, bird_y))
+            for cloud in self.clouds:
+                cloud.update()
+                cloud.draw(self.screen)
+            for shell in self.shells:
+                shell.update()
+                shell.draw(self.screen)
+            self.screen.blit(image, (SCREEN_WIDTH / 2 - image.get_width() / 2, SCREEN_HEIGHT / 10))
+            y_offset = SCREEN_HEIGHT / 3
+            for item in text_lines_with_styles:
+                if isinstance(item, tuple):
+                    line = item[0]
+                    size = item[1] if len(item) > 1 else default_size
+                    color = item[2] if len(item) > 2 else default_color
+                else:
+                    line = item
+                    size = default_size
+                    color = default_color
+                self.draw_text(self.screen, line, size, SCREEN_WIDTH / 2, y_offset, color)
+                y_offset += size + 5
+            for button in buttons:
+                button.draw(self.screen, font_name=self.font_name)
+            pygame.display.flip()
 
-            # Gestion des tuyaux
-            for pipe in pipes:
-                pipe[0] += pipe_speed
-                pipe_x, pipe_y, pipe_passed, pipe_gap, has_plant = pipe
-
-                # Dessiner le tuyau
-                draw_pipe(screen, pipe_x, pipe_y, pipe_gap, brique_img, plante_img, has_plant)
-
-                # Générer de nouveaux tuyaux avec des contraintes sur pipe_y
-                if pipe[0] < -50:
-                    new_gap = random.randint(PIPE_GAP_MIN, PIPE_GAP_MAX)
-
-                    # Assurez-vous que le gap respecte les marges
-                    new_pipe_y = random.randint(
-                        GAP_MARGIN + new_gap,  # Au moins GAP_MARGIN en dessous du haut
-                        SCREEN_HEIGHT - GAP_MARGIN  # Au moins GAP_MARGIN au-dessus du bas
-                    )
-                    has_plant = random.choice([True, False])
-
-                    pipes.append([400, new_pipe_y, False, new_gap, has_plant])
-                    pipes.pop(0)
-
-                # Vérifier si le tuyau a été passé pour augmenter le score
-                if pipe[0] + brique_img.get_width() < BIRD_X and not pipe_passed:
-                    score += 1
-                    pipe[2] = True  # Marquer le tuyau comme passé
-
-            # Détection des collisions
-            for pipe in pipes:
-                pipe_x, pipe_y, pipe_passed, pipe_gap, has_plant = pipe
-                pipe_width = brique_img.get_width()
-                brique_height = brique_img.get_height()
-
-                # Calculer la hauteur du tuyau supérieur
-                upper_pipe_height = pipe_y - pipe_gap
-                if has_plant:
-                    upper_pipe_height -= 2 * brique_height
-
-                upper_pipe_rect = pygame.Rect(pipe_x, 0, pipe_width, upper_pipe_height)
-                lower_pipe_rect = pygame.Rect(pipe_x, pipe_y, pipe_width, SCREEN_HEIGHT - pipe_y)
-
-                if bird_rect.colliderect(upper_pipe_rect) or bird_rect.colliderect(lower_pipe_rect):
-                    running = False
-                    break
-
-                if has_plant:
-                    plante_rect = plante_img.get_rect()
-                    plante_rect.x = pipe_x + (pipe_width - plante_img.get_width()) // 2
-                    plante_rect.y = pipe_y - plante_img.get_height()
-                    if bird_rect.colliderect(plante_rect):
-                        running = False
-                        break
-
-            draw_text(screen, f"Score: {score}", 24, SCREEN_WIDTH - 100, 50)
-
-            # Augmenter la vitesse des tuyaux
-            if score // SCORE_INTERVAL_FOR_SPEED_INCREASE > last_speed_increase_score:
-                pipe_speed -= 1
-                last_speed_increase_score = score // SCORE_INTERVAL_FOR_SPEED_INCREASE
-
-            # Jouer la vidéo lorsque le score atteint 10
-            # if score >= 1 and not video_played:
-            #     play_video(screen, '/Users/souchaud/Documents/Autre/2024_11_26_anniv_anatole/resources/test_video.avi')
-            #     video_played = True
-            if score >= 1 and not video_played:
-                play_video(screen, resource_path('resources/test_video.avi'))
-                video_played = True
-                
-            # Vérifier si l'oiseau est sorti de l'écran
-            if bird_y >= SCREEN_HEIGHT - bird_img.get_height() or bird_y <= 0:
-                running = False
-
+    def play_video(self, video_path):
+        """
+        Jouer une vidéo en plein écran.
+        """
+        clip = VideoFileClip(video_path)
+        clip = clip.resized(height=SCREEN_HEIGHT, width=SCREEN_WIDTH)
+        clock = pygame.time.Clock()
+        for frame in clip.iter_frames(fps=30, dtype="uint8"):
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+            frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+            self.screen.blit(frame_surface, (0, 0))
             pygame.display.update()
-            pygame.time.Clock().tick(frames_per_second)
+            clock.tick(30)
+        clip.close()
 
-        if not game_over_screen(screen, score):
-            break  # Quitter si l'utilisateur choisit de ne pas rejouer
+class Star:
+    """
+    Classe représentant une étoile scintillante en arrière-plan.
+    """
 
-        running = True
-        video_played = False
+    def __init__(self):
+        self.x = random.randint(0, SCREEN_WIDTH)
+        self.y = random.randint(0, SCREEN_HEIGHT)
+        self.base_radius = random.randint(1, 3)
+        self.radius_variation = random.uniform(0.1, 0.5)
+        self.current_radius = self.base_radius
+        self.pulse_speed = random.uniform(0.02, 0.05)
+        self.brightness = 255
+        self.direction = 1
 
-    pygame.quit()
+    def update(self):
+        """
+        Mettre à jour l'effet de scintillement de l'étoile.
+        """
+        self.brightness += self.direction * self.pulse_speed * 255
+        if self.brightness > 255:
+            self.brightness = 255
+            self.direction = -1
+        elif self.brightness < 150:
+            self.brightness = 150
+            self.direction = 1
+        self.current_radius = self.base_radius + self.radius_variation * (self.brightness / 255)
+
+    def draw(self, screen):
+        """
+        Dessiner l'étoile avec une luminosité variable.
+        """
+        brightness_color = (int(self.brightness), int(self.brightness), 0)
+        pygame.draw.circle(screen, brightness_color, (int(self.x), int(self.y)), int(self.current_radius))
+
+class Player:
+    """
+    Classe représentant le joueur (Mario volant).
+    """
+    def __init__(self, game):
+        self.game = game
+        self.image = game.bird_img
+        self.width = self.image.get_width()
+        self.height = self.image.get_height()
+        self.x = 50
+        self.reset()
+
+    def reset(self):
+        """
+        Réinitialiser la position et l'état du joueur.
+        """
+        self.y = SCREEN_HEIGHT // 2
+        self.velocity = 0
+        self.dead = False
+
+    def flap(self):
+        """
+        Faire sauter le joueur en lui appliquant une force vers le haut.
+        """
+        self.velocity = FLAP_STRENGTH
+
+    def dive(self):
+        """
+        Faire plonger le joueur en lui appliquant une force vers le bas.
+        """
+        self.velocity = -FLAP_STRENGTH
+
+    def update(self):
+        """
+        Mettre à jour la position du joueur en fonction de la gravité et de sa vitesse.
+        """
+        self.velocity += GRAVITY
+        self.y += self.velocity
+
+    def draw(self, screen):
+        """
+        Dessiner le joueur à l'écran.
+        """
+        screen.blit(self.image, (self.x, self.y))
+
+    def get_rect(self):
+        """
+        Obtenir le rectangle englobant du joueur pour la détection des collisions.
+        """
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+
+    def collide_with(self, pipe):
+        """
+        Vérifier la collision avec un tuyau.
+        """
+        player_rect = self.get_rect()
+        collision = player_rect.colliderect(pipe.upper_pipe_rect) or \
+                    player_rect.colliderect(pipe.lower_pipe_rect)
+        if pipe.has_plant and pipe.plant_rect:
+            collision = collision or player_rect.colliderect(pipe.plant_rect)
+        return collision
+
+class Pipe:
+    """
+    Classe représentant un tuyau dans le jeu.
+    """
+    def __init__(self, game, x=None):
+        self.game = game
+        self.image = game.brique_img
+        self.plant_image = game.plante_img
+        self.width = self.image.get_width()
+        self.height = self.image.get_height()
+        self.x = x if x is not None else SCREEN_WIDTH
+        self.speed = PIPE_SPEED_INIT
+        self.pipe_gap = random.randint(PIPE_GAP_MIN, PIPE_GAP_MAX)
+        self.pipe_y = random.randint(100 + self.pipe_gap, SCREEN_HEIGHT - 50)
+        self.has_plant = random.choice([True, False])
+        self.passed = False
+
+        self.upper_pipe_rect = None
+        self.lower_pipe_rect = None
+        self.plant_rect = None
+        self.calculate_collision_rects()
+
+    def calculate_collision_rects(self):
+        """
+        Calculer les rectangles de collision pour le tuyau supérieur, le tuyau inférieur et la plante.
+        """
+        y_top = self.pipe_y - self.pipe_gap - self.height
+        min_y_top = -self.height
+        if self.has_plant:
+            min_y_top += 2 * self.height
+        upper_pipe_height = y_top - min_y_top
+        self.upper_pipe_rect = pygame.Rect(
+            self.x, min_y_top, self.width, upper_pipe_height
+        )
+
+        y_bottom = self.pipe_y
+        lower_pipe_height = SCREEN_HEIGHT - y_bottom
+        self.lower_pipe_rect = pygame.Rect(
+            self.x, y_bottom, self.width, lower_pipe_height
+        )
+
+        if self.has_plant:
+            plant_x = self.x + (self.width - self.plant_image.get_width()) // 2
+            plant_y = self.pipe_y - self.plant_image.get_height()
+            plant_width = self.plant_image.get_width()
+            plant_height = self.plant_image.get_height()
+            self.plant_rect = pygame.Rect(
+                plant_x, plant_y, plant_width, plant_height
+            )
+        else:
+            self.plant_rect = None
+
+    def update(self):
+        """
+        Mettre à jour la position du tuyau et recalculer les rectangles de collision.
+        """
+        self.x += self.speed
+        self.calculate_collision_rects()
+
+    def off_screen(self):
+        """
+        Vérifier si le tuyau est sorti de l'écran.
+        """
+        return self.x < -self.width
+
+    def draw(self, screen):
+        """
+        Dessiner le tuyau et la plante (si présente) à l'écran.
+        """
+        y = self.upper_pipe_rect.bottom - self.height
+        while y >= self.upper_pipe_rect.top:
+            screen.blit(pygame.transform.flip(self.image, False, True), (self.x, y))
+            y -= self.height
+
+        y = self.lower_pipe_rect.top
+        while y < SCREEN_HEIGHT:
+            screen.blit(self.image, (self.x, y))
+            y += self.height
+
+        if self.has_plant and self.plant_rect:
+            screen.blit(self.plant_image, (self.plant_rect.x, self.plant_rect.y))
+
+class Cloud:
+    """
+    Classe représentant un nuage en arrière-plan.
+    """
+    def __init__(self, game):
+        self.game = game
+        self.image = game.nuage_img
+        self.width = self.image.get_width()
+        self.height = self.image.get_height()
+        self.x = random.randint(0, SCREEN_WIDTH)
+        self.y = random.randint(0, SCREEN_HEIGHT // 2)
+        self.speed = random.uniform(0.1, 2)
+
+    def update(self):
+        """
+        Mettre à jour la position du nuage.
+        """
+        self.x -= self.speed
+        if self.x < -self.width:
+            self.x = SCREEN_WIDTH
+            self.y = random.randint(0, SCREEN_HEIGHT // 2)
+            self.speed = random.uniform(0.1, 2)
+
+    def draw(self, screen):
+        """
+        Dessiner le nuage à l'écran.
+        """
+        screen.blit(self.image, (self.x, self.y))
+
+class Shell:
+    """
+    Classe représentant une carapace volante en arrière-plan.
+    """
+    def __init__(self, game):
+        self.game = game
+        self.original_images = [game.shell_red_img_original, game.shell_green_img_original]
+        self.image_original = random.choice(self.original_images)
+        
+        # Taille aléatoire entre 0.01 et 0.03 de la taille originale
+        self.scale_factor = random.uniform(0.01, 0.03)
+        self.width = int(self.image_original.get_width() * self.scale_factor)
+        self.height = int(self.image_original.get_height() * self.scale_factor)
+        self.image = pygame.transform.scale(self.image_original, (self.width, self.height))
+
+        self.x = random.randint(0, SCREEN_WIDTH)
+        self.y = random.randint(0, SCREEN_HEIGHT // 2)
+        self.speed_x = random.uniform(-3, 3)
+        while abs(self.speed_x) < 1:  # Éviter une vitesse horizontale trop faible
+            self.speed_x = random.uniform(-3, 3)
+        self.speed_y = random.uniform(-1.5, 1.5)
+
+        # Déterminer si on doit appliquer l'effet miroir
+        self.update_image_direction()
+
+    def update_image_direction(self):
+        """
+        Appliquer ou non l'effet miroir en fonction de la direction de mouvement.
+        """
+        if self.speed_x < 0:
+            # Appliquer un miroir horizontal si la carapace se déplace vers la gauche
+            self.image = pygame.transform.flip(self.image_original, True, False)
+            # Re-redimensionner l'image après flip
+            self.image = pygame.transform.scale(self.image, (self.width, self.height))
+        else:
+            # Sinon, utiliser l'image originale redimensionnée
+            self.image = pygame.transform.scale(self.image_original, (self.width, self.height))
+
+    def update(self):
+        """
+        Mettre à jour la position de la carapace.
+        """
+        self.x += self.speed_x
+        self.y += self.speed_y
+
+        # Repositionner la carapace si elle sort de l'écran
+        if self.x < -self.width or self.x > SCREEN_WIDTH:
+            self.x = SCREEN_WIDTH if self.speed_x < 0 else -self.width
+            self.y = random.randint(0, SCREEN_HEIGHT // 2)
+            self.speed_x = random.uniform(-3, 3)
+            while abs(self.speed_x) < 1:
+                self.speed_x = random.uniform(-3, 3)
+            self.speed_y = random.uniform(-1.5, 1.5)
+            
+            # Taille aléatoire entre 0.01 et 0.03
+            self.scale_factor = random.uniform(0.01, 0.03)
+            self.width = int(self.image_original.get_width() * self.scale_factor)
+            self.height = int(self.image_original.get_height() * self.scale_factor)
+            self.image = pygame.transform.scale(self.image_original, (self.width, self.height))
+            self.update_image_direction()
+        
+        # Inverser la direction verticale si la carapace atteint le bord de l'écran
+        if self.y < 0 or self.y > SCREEN_HEIGHT - self.height:
+            self.speed_y *= -1
+
+    def draw(self, screen):
+        """
+        Dessiner la carapace à l'écran.
+        """
+        screen.blit(self.image, (self.x, self.y))
+
+class Button:
+    """
+    Représente un bouton interactif dans l'interface utilisateur.
+    """
+    def __init__(self, text, x, y, width, height, color=(170, 170, 170), text_color=(255, 255, 255)):
+        self.text = text
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.color = color
+        self.text_color = text_color
+
+    def draw(self, screen, font_name, font_size=20):
+        """
+        Dessine le bouton sur l'écran.
+        """
+        mouse = pygame.mouse.get_pos()
+        click = pygame.mouse.get_pressed()
+        if self.is_hovered(mouse):
+            pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
+        else:
+            pygame.draw.rect(screen, (200, 200, 200), (self.x, self.y, self.width, self.height))
+        font = pygame.font.Font(font_name, font_size)
+        text_surface = font.render(self.text, True, self.text_color)
+        text_rect = text_surface.get_rect(center=(self.x + self.width / 2, self.y + self.height / 2))
+        screen.blit(text_surface, text_rect)
+
+    def is_hovered(self, mouse):
+        """
+        Vérifie si la souris survole le bouton.
+        """
+        return self.x < mouse[0] < self.x + self.width and self.y < mouse[1] < self.y + self.height
+
+    def is_clicked(self):
+        """
+        Vérifie si le bouton est cliqué.
+        """
+        return self.is_hovered(pygame.mouse.get_pos()) and pygame.mouse.get_pressed()[0]
+
+def main():
+    """
+    Fonction principale pour lancer le jeu.
+    """
+    game = Game()
+    game.run()
 
 if __name__ == "__main__":
     main()

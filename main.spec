@@ -1,12 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('resources', 'resources')],
-    hiddenimports=['imageio', 'imageio.plugins.ffmpeg'],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -14,38 +13,35 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
-    name='main',
+    name='JoyeuxAnniversaireAnatole',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
+    target_arch='universal2',  # Ajouté pour supporter ARM et Intel
     codesign_identity=None,
     entitlements_file=None,
-    icon=['resources/app_icon.icns'],
+    icon='resources/app_icon.icns',
+    onefile=True,  # Ajouté pour activer le mode onefile
 )
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='main',
-)
+
 app = BUNDLE(
-    coll,
-    name='main.app',
+    exe,
+    name='JoyeuxAnniversaireAnatole.app',
     icon='resources/app_icon.icns',
     bundle_identifier=None,
 )

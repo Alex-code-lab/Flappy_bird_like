@@ -5,9 +5,13 @@ import random
 from moviepy import VideoFileClip  # Importer VideoFileClip depuis moviepy
 import time  # Importer time pour gérer le cooldown
 import logging
+from pathlib import Path
+import threading
 
-# Configuration des logs
-logging.basicConfig(level=logging.DEBUG, filename='game.log', filemode='w',
+# Définir un chemin absolu pour le fichier de logs (par exemple, sur le bureau)
+desktop_path = Path.home() / "Desktop" / "game.log"
+
+logging.basicConfig(level=logging.DEBUG, filename=str(desktop_path), filemode='w',
                     format='%(name)s - %(levelname)s - %(message)s')
 
 # Configuration de l'environnement pour MoviePy (si nécessaire)
@@ -29,11 +33,13 @@ TRANSITION_DURATION = FPS * 2  # Durée de la transition jour/nuit en frames
 PAUSE_COOLDOWN = 2  # Délai en secondes pour le cooldown de la pause
 
 def resource_path(relative_path):
-    """Obtenir le chemin absolu vers une ressource, fonctionne pour le développement et pour PyInstaller."""
+    """Obtenir le chemin absolu vers une ressource, fonctionne pour le développement et pour py2app."""
     try:
+        # py2app utilise sys.frozen
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
+
     return os.path.join(base_path, relative_path)
 
 class Game:
@@ -78,44 +84,6 @@ class Game:
 
         # Initialiser le timer pour le cooldown de la pause
         self.last_pause_toggle_time = 0
-
-    # def load_resources(self):
-    #     """
-    #     Charger toutes les ressources nécessaires (images, polices, musique).
-    #     """
-    #     # Chemin vers la police utilisée
-    #     self.font_path = resource_path('resources/SuperMario256.ttf')
-
-    #     # Charger et redimensionner les images nécessaires
-    #     self.bird_img = pygame.image.load(resource_path('resources/mario_volant.png')).convert_alpha()
-    #     self.bird_img = pygame.transform.scale(self.bird_img, (50, 50))
-
-    #     self.brique_img = pygame.image.load(resource_path('resources/brique.png')).convert_alpha()
-    #     self.brique_img = pygame.transform.scale(self.brique_img, (50, 50))
-
-    #     self.plante_img = pygame.image.load(resource_path('resources/plante.png')).convert_alpha()
-    #     self.plante_img = pygame.transform.scale(self.plante_img, (50, 75))
-
-    #     self.nuage_img = pygame.image.load(resource_path('resources/nuage.png')).convert_alpha()
-    #     self.nuage_img = pygame.transform.scale(self.nuage_img, (100, 60))
-
-    #     self.shell_red_img_original = pygame.image.load(resource_path('resources/carapace_rouge.png')).convert_alpha()
-    #     self.shell_green_img_original = pygame.image.load(resource_path('resources/carapace_verte.png')).convert_alpha()
-
-    #     self.title_image = pygame.image.load(resource_path('resources/mission_joyeux_anniversaire.png')).convert_alpha()
-    #     self.game_over_image = pygame.image.load(resource_path('resources/Game_over.png')).convert_alpha()
-
-    #     # Redimensionner les images de titre et de fin
-    #     image_width = 300
-    #     title_image_height = int(self.title_image.get_height() * (image_width / self.title_image.get_width()))
-    #     self.title_image = pygame.transform.scale(self.title_image, (image_width, title_image_height))
-    #     game_over_image_height = int(self.game_over_image.get_height() * (image_width / self.game_over_image.get_width()))
-    #     self.game_over_image = pygame.transform.scale(self.game_over_image, (image_width, game_over_image_height))
-
-    #     # Charger et jouer la musique de fond
-    #     pygame.mixer.music.load(resource_path('resources/mario_theme_song.mp3'))  # Remplacez par le nom de votre fichier musical
-    #     pygame.mixer.music.set_volume(0.5)  # Optionnel : régler le volume (0.0 à 1.0)
-    #     pygame.mixer.music.play(-1)  # -1 pour une boucle infinie
 
     def load_resources(self):
         """Charger toutes les ressources nécessaires (images, polices, musique)."""
@@ -323,7 +291,7 @@ class Game:
 
         # Jouer la vidéo si le score atteint 10 et que la vidéo n'a pas encore été jouée
         if self.score >= 10 and not self.video_played:
-            self.play_video(resource_path('resources/test_video.avi'))
+            self.play_video(resource_path('resources/video_anniv.mp4'))
             self.video_played = True
             self.game_paused = True
             self.pause_buttons = [
@@ -466,12 +434,34 @@ class Game:
                 button.draw(self.screen, font_name=self.font_name)
             pygame.display.flip()
 
+    # def play_video(self, video_path):
+    #     """
+    #     Jouer une vidéo en plein écran.
+    #     """
+    #     clip = VideoFileClip(video_path)
+    #     clip = clip.resized(height=SCREEN_HEIGHT, width=SCREEN_WIDTH)
+    #     clock = pygame.time.Clock()
+    #     for frame in clip.iter_frames(fps=30, dtype="uint8"):
+    #         for event in pygame.event.get():
+    #             if event.type == pygame.QUIT:
+    #                 pygame.quit()
+    #                 sys.exit()
+    #         frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+    #         self.screen.blit(frame_surface, (0, 0))
+    #         pygame.display.update()
+    #         clock.tick(30)
+    #     clip.close()
+
     def play_video(self, video_path):
-        """
-        Jouer une vidéo en plein écran.
-        """
         clip = VideoFileClip(video_path)
-        clip = clip.resized(height=SCREEN_HEIGHT, width=SCREEN_WIDTH)
+        clip = clip.resized(new_size=(300, 500))
+
+        pygame.mixer.music.pause()
+        # Charger et jouer la musique de fond
+        pygame.mixer.music.load(resource_path('resources/video_anniv.mp3'))
+        pygame.mixer.music.set_volume(0.8)
+        pygame.mixer.music.play(-1)
+
         clock = pygame.time.Clock()
         for frame in clip.iter_frames(fps=30, dtype="uint8"):
             for event in pygame.event.get():
@@ -479,10 +469,78 @@ class Game:
                     pygame.quit()
                     sys.exit()
             frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
-            self.screen.blit(frame_surface, (0, 0))
+            # frame_surface = pygame.transform.rotate(frame_surface, -90)  # Si besoin de rotation
+            # frame_surface = pygame.transform.flip(frame_surface, True, False)  # Si besoin de flip
+            frame_width = frame_surface.get_width()
+            frame_height = frame_surface.get_height()
+            x = (SCREEN_WIDTH - frame_width) // 2
+            y = (SCREEN_HEIGHT - frame_height) // 2
+            self.screen.blit(frame_surface, (x, y))
+
+
+
+
             pygame.display.update()
+
             clock.tick(30)
+            # pygame.mixer.music.stop()
+        pygame.mixer.music.pause()
+        # Charger et jouer la musique de fond
+        pygame.mixer.music.load(resource_path('resources/mario_theme_song.mp3'))
+        pygame.mixer.music.set_volume(0.8)
+        pygame.mixer.music.play(-1)
         clip.close()
+
+    # def play_video(self, video_path):
+    #     """
+    #     Jouer une vidéo sans son tout en lisant l'audio depuis un fichier MP3.
+    #     """
+    #     try:
+    #         # Mettre en pause la musique de fond du jeu si elle est en cours de lecture
+    #         pygame.mixer.music.pause()
+            
+    #         # Charger le clip vidéo sans audio
+    #         clip = VideoFileClip(video_path).without_audio()
+    #         # Redimensionner le clip pour correspondre à la taille souhaitée
+    #         clip = clip.resized(newsize=(300, 500))
+            
+    #         # Charger et jouer l'audio avec pygame.mixer.music
+    #         audio_path = resource_path('resources/test_video.mp3')  # Assurez-vous que le chemin est correct
+    #         pygame.mixer.music.load(audio_path)
+    #         pygame.mixer.music.play()
+            
+    #         clock = pygame.time.Clock()
+    #         for frame in clip.iter_frames(fps=30, dtype="uint8"):
+    #             for event in pygame.event.get():
+    #                 if event.type == pygame.QUIT:
+    #                     pygame.mixer.music.stop()
+    #                     pygame.quit()
+    #                     sys.exit()
+    #             # Convertir la frame en surface
+    #             frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+    #             frame_width = frame_surface.get_width()
+    #             frame_height = frame_surface.get_height()
+    #             x = (SCREEN_WIDTH - frame_width) // 2
+    #             y = (SCREEN_HEIGHT - frame_height) // 2
+    #             self.screen.blit(frame_surface, (x, y))
+    #             pygame.display.update()
+    #             clock.tick(30)
+            
+    #         # Attendre la fin de la lecture audio
+    #         while pygame.mixer.music.get_busy():
+    #             pygame.time.Clock().tick(10)
+            
+    #         # Arrêter la musique de la vidéo
+    #         pygame.mixer.music.stop()
+    #         # Reprendre la musique de fond du jeu
+    #         pygame.mixer.music.unpause()
+    #         clip.close()
+    #     except Exception as e:
+    #         logging.error(f"Error playing video: {e}")
+    #         print(f"Error playing video: {e}")
+    #         # Assurez-vous que le jeu continue même en cas d'erreur
+    #         self.video_played = True
+   
 
 class Star:
     """
@@ -803,12 +861,19 @@ class Button:
         """
         return self.is_hovered(pygame.mouse.get_pos()) and pygame.mouse.get_pressed()[0]
 
+# def main():
+#     """
+#     Fonction principale pour lancer le jeu.
+#     """
+#     game = Game()
+#     game.run()
 def main():
-    """
-    Fonction principale pour lancer le jeu.
-    """
-    game = Game()
-    game.run()
+    try:
+        logging.debug("Starting game")
+        game = Game()
+        game.run()
+    except Exception as e:
+        logging.error(f"Exception in main: {e}")
 
 if __name__ == "__main__":
     main()

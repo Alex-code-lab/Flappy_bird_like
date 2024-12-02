@@ -31,6 +31,7 @@ SCORE_INTERVAL_FOR_SPEED_INCREASE = 3  # Score nécessaire pour augmenter la vit
 DAY_NIGHT_CYCLE = 5  # Intervalle de score pour changer le cycle jour/nuit
 TRANSITION_DURATION = FPS * 2  # Durée de la transition jour/nuit en frames
 PAUSE_COOLDOWN = 2  # Délai en secondes pour le cooldown de la pause
+AGE_ENFANT = 10 # Age de l'enfant pour avoir la suprise
 
 def resource_path(relative_path):
     """Obtenir le chemin absolu vers une ressource, fonctionne pour le développement et pour py2app."""
@@ -290,7 +291,7 @@ class Game:
             self.player.dead = True
 
         # Jouer la vidéo si le score atteint 10 et que la vidéo n'a pas encore été jouée
-        if self.score >= 10 and not self.video_played:
+        if self.score >= AGE_ENFANT and not self.video_played:
             self.play_video(resource_path('resources/video_anniv.mp4'))
             self.video_played = True
             self.game_paused = True
